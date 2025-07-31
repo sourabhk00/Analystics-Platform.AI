@@ -4,7 +4,6 @@
 
 ## Table of Contents
 - [Overview](#overview)
-- [Directory Structure](#directory-structure)
 - [Features](#features)
 - [User Preferences](#user-preferences)
 - [System Architecture](#system-architecture)
@@ -33,38 +32,6 @@
 ## Overview
 
 A full-stack platform for intelligent web scraping, NLP-powered knowledge graph generation, and AI-driven natural language Q&A. The system ingests web content, extracts entities and relationships, builds interactive graphs, and answers user questions based on the discovered knowledge.
-
----
-
-## Directory Structure
-
-```
-data-analytics-graph/
-│
-├── backend/
-│   ├── main.py                # FastAPI entry point
-│   ├── routers/
-│   │   ├── scrape.py          # Scraping endpoints
-│   │   ├── graph.py           # Graph building/query endpoints
-│   │   └── qa.py              # QA endpoints
-│   ├── services/
-│   │   ├── scraper.py         # Scrape URLs
-│   │   ├── nlp.py             # Entity/relationship extraction
-│   │   ├── graph_builder.py   # Build Neo4j graph
-│   │   └── qa_engine.py       # LangChain/OpenAI graph QA
-│   └── config.py              # API keys, Neo4j configs
-│
-├── frontend/
-│   ├── streamlit_app.py       # Streamlit graph explorer
-│   └── react_app/             # React app (optional)
-│
-├── notebooks/
-│   └── colab_version.ipynb    # Full pipeline in one notebook
-│
-├── requirements.txt
-├── README.md
-└── .env                       # API keys
-```
 
 ---
 
