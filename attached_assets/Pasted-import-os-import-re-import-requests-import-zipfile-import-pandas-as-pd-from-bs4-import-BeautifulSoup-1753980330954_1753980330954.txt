@@ -1,0 +1,193 @@
+import os
+import re
+import requests
+import zipfile
+import pandas as pd
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import spacy
+nlp = spacy.load("en_core_web_sm")
+
+# --- Configuration ---
+HEADERS = {"User-Agent": "Mozilla/5.0"}
+MAX_WORKERS = 20
+MAX_DEPTH = 3
+
+# --- Utility Functions ---
+def sanitize_filename(name):
+    return re.sub(r'[\\/*?:"<>|]', "_", name)
+
+def get_domain(url):
+    return urlparse(url).netloc
+
+def extract_categories(base_url, domain):
+    try:
+        res = requests.get(base_url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        all_links = set()
+        for tag in soup.find_all('a', href=True):
+            href = tag['href']
+            full_url = urljoin(base_url, href)
+            if domain in urlparse(full_url).netloc:
+                text = tag.get_text(strip=True)
+                if text and not text.lower().startswith("edit"):
+                    all_links.add((text, full_url))
+        categories = {}
+        for text, link in sorted(all_links):
+            clean_text = sanitize_filename(text) or "misc"
+            categories[clean_text] = link
+        return categories
+    except Exception as e:
+        print(f"⚠️ Failed to extract categories: {e}")
+        return {}
+
+def extract_lore_relationships(text, page_title):
+    doc = nlp(text)
+    relationships = []
+    for sent in doc.sents:
+        sentence = sent.text.lower()
+        ents = [ent.text for ent in sent.ents if ent.label_ in ['PERSON', 'ORG', 'GPE', 'NORP']]
+        for ent in ents:
+            if "used by" in sentence:
+                relationships.append((page_title, "USED_BY", ent))
+            elif "created by" in sentence:
+                relationships.append((page_title, "CREATED_BY", ent))
+            elif "located in" in sentence or "originated in" in sentence:
+                relationships.append((page_title, "LOCATED_IN", ent))
+            elif "affiliated with" in sentence or "member of" in sentence:
+                relationships.append((page_title, "AFFILIATED_WITH", ent))
+            elif "heals" in sentence or "reduces" in sentence or "cures" in sentence:
+                relationships.append((page_title, "EFFECT_ON", ent))
+            elif "belongs to" in sentence:
+                relationships.append((page_title, "BELONGS_TO", ent))
+    return relationships
+
+def scrape_page(url, depth, domain, category):
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        content_div = soup.find('div', id='page-content') or soup.body
+        if not content_div:
+            return None
+        for tag in content_div.find_all(['script', 'style', 'footer', 'nav', 'table']):
+            tag.decompose()
+        title = soup.title.string.strip() if soup.title else url
+        text = content_div.get_text(separator='\n', strip=True)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        word_count = len(text.split())
+        links, images = [], []
+        for tag in content_div.find_all('a', href=True):
+            full_url = urljoin(url, tag['href'])
+            if domain in urlparse(full_url).netloc:
+                links.append(full_url)
+        for img in content_div.find_all('img', src=True):
+            images.append(urljoin(url, img['src']))
+        relationships = extract_lore_relationships(text, title)
+        return {
+            "URL": url,
+            "Title": title,
+            "Content": text,
+            "WordCount": word_count,
+            "Depth": depth,
+            "Category": category,
+            "Links": sorted(set(links)),
+            "Images": sorted(set(images)),
+            "Relationships": relationships
+        }
+    except Exception as e:
+        print(f"❌ Error scraping {url}: {e}")
+        return None
+
+def save_text(data, base_folder):
+    folder = os.path.join(base_folder, "pages", sanitize_filename(data['Category']))
+    os.makedirs(folder, exist_ok=True)
+    filename = sanitize_filename(data['URL'].split('/')[-1] or "index") + ".txt"
+    path = os.path.join(folder, filename)
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(data['Content'])
+
+def save_all_data(data_list, base_folder):
+    df = pd.DataFrame(data_list)
+    df.to_csv(os.path.join(base_folder, "scraped_data.csv"), index=False)
+    df.to_excel(os.path.join(base_folder, "scraped_data.xlsx"), index=False, engine='openpyxl')
+
+def save_as_cypher(relationships, filename):
+    with open(filename, "w", encoding='utf-8') as f:
+        for src, rel, tgt in relationships:
+            f.write(f"MERGE (a:Entity {{name: '{src}'}}) "
+                    f"MERGE (b:Entity {{name: '{tgt}'}}) "
+                    f"MERGE (a)-[:{rel.upper()}]->(b);\n")
+
+def zip_data(folder):
+    zipname = folder + ".zip"
+    with zipfile.ZipFile(zipname, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(folder):
+            for file in files:
+                filepath = os.path.join(root, file)
+                arcname = os.path.relpath(filepath, start=folder)
+                zipf.write(filepath, arcname=arcname)
+    return zipname
+
+# --- Main Program ---
+def main():
+    base_url = input("🔗 Enter the base URL to scrape: ").strip()
+    if not base_url.startswith("http"):
+        print("⚠️ Invalid URL. Must start with http or https.")
+        return
+
+    domain = get_domain(base_url)
+    base_folder = sanitize_filename(urlparse(base_url).netloc)
+    seen = set()
+    results = []
+    all_relationships = []
+
+    print("🔍 Detecting categories...")
+    categories = extract_categories(base_url, domain)
+    print(f"📂 Found {len(categories)} categories.")
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {}
+
+        for category, cat_url in categories.items():
+            if cat_url not in seen:
+                seen.add(cat_url)
+                futures[executor.submit(scrape_page, cat_url, 0, domain, category)] = (cat_url, category)
+
+        while futures:
+            done, _ = as_completed(futures), len(futures)
+            for future in done:
+                url, category = futures.pop(future)
+                result = future.result()
+                if not result:
+                    continue
+                results.append({
+                    "URL": result["URL"],
+                    "Title": result["Title"],
+                    "Content": result["Content"],
+                    "WordCount": result["WordCount"],
+                    "Depth": result["Depth"],
+                    "Category": result["Category"],
+                    "Images": ", ".join(result["Images"]),
+                    "Relationships": "|".join([f"{src} -[{rel}]-> {tgt}" for src, rel, tgt in result["Relationships"]])
+                })
+                all_relationships.extend(result["Relationships"])
+                save_text(result, base_folder)
+
+                if result["Depth"] < MAX_DEPTH:
+                    for link in result["Links"]:
+                        if link not in seen:
+                            seen.add(link)
+                            futures[executor.submit(scrape_page, link, result["Depth"] + 1, domain, category)] = (link, category)
+
+    print("📥 Saving CSV/XLSX...")
+    save_all_data(results, base_folder)
+    print("🧠 Saving Cypher for Neo4j...")
+    save_as_cypher(all_relationships, os.path.join(base_folder, "graph.cypher"))
+    print("🗜️ Zipping files...")
+    zipname = zip_data(base_folder)
+    print(f"✅ Done! Archive available: {zipname}")
+
+if __name__ == "__main__":
+    main()
