@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { wsClient } from '@/lib/websocket';
 
+
 export function useWebSocket() {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
