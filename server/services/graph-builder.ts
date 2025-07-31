@@ -1,5 +1,6 @@
 import { Entity, Relationship, Document } from "@shared/schema";
 
+
 interface GraphNode {
   id: string;
   label: string;
