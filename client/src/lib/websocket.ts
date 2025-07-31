@@ -6,6 +6,7 @@ export class WebSocketClient {
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
 
+  
   constructor() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.url = `${protocol}//${window.location.host}/api/ws`;
