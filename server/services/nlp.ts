@@ -8,6 +8,7 @@ interface EntityExtraction {
   confidence?: number;
 }
 
+
 interface RelationshipExtraction {
   source: string;
   target: string;
