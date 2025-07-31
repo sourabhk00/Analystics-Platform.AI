@@ -9,6 +9,7 @@ interface ChatMessage {
   queryGenerated?: string;
 }
 
+
 interface QAResponse {
   answer: string;
   sources: string[];
